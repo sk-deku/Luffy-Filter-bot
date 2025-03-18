@@ -20,12 +20,12 @@ bot = Client("AutoFilterBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TO
 db = Database(MONGO_URI)
 
 # Start Command
-@bot.on_message(filters.command("start"))
+@bot.on_message(filters.command("start") & filters.private)
 def start(client, message):
     message.reply_text("Hello! Send me an anime name to search.")
 
 # Search & Send File
-@bot.on_message(filters.text & ~filters.command)
+@bot.on_message(filters.text & ~filters.command & filters.private)
 def search_files(client, message):
     query = message.text.strip()
     files = db.search_files(query)
@@ -35,14 +35,24 @@ def search_files(client, message):
         message.reply_text("No files found!")
         return
     
-    if get_tokens(user_id) == 0:
+    if get_tokens(user_id) <= 0:  # Ensure 0 tokens are handled safely
         message.reply_text("You need tokens to download files! Bypass a link to earn tokens.")
         return
     
     for file in files:
-        short_link = shorten_url(f"https://t.me/{file['file_id']}")
-        message.reply_text(f"Click here: {short_link}")
-        deduct_token(user_id, 1)  # Deduct 1 token per file
+        try:
+            file_id = file.get('file_id')
+            if not file_id:
+                continue
+
+            short_link = shorten_url(f"https://t.me/{PRIVATE_CHANNEL_ID}/{file_id}")
+            if short_link:
+                message.reply_text(f"Click here: {short_link}")
+                deduct_token(user_id, 1)
+            else:
+                message.reply_text("Failed to generate short link. Try again later.")
+        except Exception as e:
+            logging.error(f"Error sending file: {e}")
 
 # Bulk Indexing Command
 @bot.on_message(filters.command("index") & filters.user(OWNER_ID))
@@ -53,8 +63,12 @@ def index_command(client, message):
         return
     
     channel_id = parts[1]
-    index_channel(channel_id)
-    message.reply_text("Indexing complete!")
+    try:
+        index_channel(channel_id)
+        message.reply_text("Indexing complete!")
+    except Exception as e:
+        logging.error(f"Indexing failed: {e}")
+        message.reply_text(f"Indexing failed: {str(e)}")
 
 # Health Check Route (for Koyeb)
 @bot.on_message(filters.command("health"))
