@@ -19,5 +19,6 @@ def shorten_url(long_url):
             return data["shortened_url"]
         else:
             return None
-    except requests.exceptions.RequestException:
+    except requests.exceptions.RequestException as e:
+        print(f"Shortener API error: {e}")
         return None
