@@ -1,6 +1,7 @@
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from database.db import DB
+from bot import app
 
 db = DB()
 
