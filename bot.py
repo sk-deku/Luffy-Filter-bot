@@ -1,6 +1,6 @@
 from pyrogram import Client, filters
 import os
-from database.db import Database
+from database import db
 from utils.shortner import shorten_url
 
 API_ID = int(os.getenv("API_ID", 0))
