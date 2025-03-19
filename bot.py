@@ -1,7 +1,7 @@
 from pyrogram import Client, filters
 import os
 from database import db
-from utils.shortner import shorten_url
+from utils import shortner
 
 API_ID = int(os.getenv("API_ID", 0))
 API_HASH = os.getenv("API_HASH", "")
