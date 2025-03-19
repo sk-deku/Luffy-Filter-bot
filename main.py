@@ -1,82 +1,65 @@
 import os
-import logging
+import asyncio
 from pyrogram import Client, filters
-from database.db import Database
-from utils.shortner import shorten_url
-from bot.tokens import add_tokens, deduct_token, get_tokens
-from bot.indexer import index_channel
-from utils.koyeb_health import health_check
+from pyrogram.types import Message
+from database.db import DB
+from utils.shortener import shorten_url
 
-# Load Config
-API_ID = int(os.getenv("API_ID", 0))
-API_HASH = os.getenv("API_HASH", "")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-MONGO_URI = os.getenv("MONGO_URI", "")
-PRIVATE_CHANNEL_ID = int(os.getenv("PRIVATE_CHANNEL_ID", 0))
-OWNER_ID = int(os.getenv("OWNER_ID", 0))
+API_ID = int(os.getenv("API_ID", "12345"))
+API_HASH = os.getenv("API_HASH", "your_api_hash")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "your_bot_token")
 
-# Initialize Bot & Database
-bot = Client("AutoFilterBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-db = Database(MONGO_URI)
+db = DB()
 
-# Start Command
-@bot.on_message(filters.command("start") & filters.private)
-def start(client, message):
-    message.reply_text("Hello! Send me an anime name to search.")
+app = Client("LuffyFilterBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# Search & Send File
-@bot.on_message(filters.text & ~filters.command & filters.private)
-def search_files(client, message):
-    query = message.text.strip()
-    files = db.search_files(query)
+@app.on_message(filters.command("start"))
+async def start_handler(client: Client, message: Message):
     user_id = message.from_user.id
-    
-    if not files:
-        message.reply_text("No files found!")
-        return
-    
-    if get_tokens(user_id) <= 0:  # Ensure 0 tokens are handled safely
-        message.reply_text("You need tokens to download files! Bypass a link to earn tokens.")
-        return
-    
-    for file in files:
-        try:
-            file_id = file.get('file_id')
-            if not file_id:
-                continue
+    db.add_user(user_id)
+    await message.reply_text("Welcome to Luffy Filter Bot! 🎌")
 
-            short_link = shorten_url(f"https://t.me/{PRIVATE_CHANNEL_ID}/{file_id}")
-            if short_link:
-                message.reply_text(f"Click here: {short_link}")
-                deduct_token(user_id, 1)
-            else:
-                message.reply_text("Failed to generate short link. Try again later.")
-        except Exception as e:
-            logging.error(f"Error sending file: {e}")
-
-# Bulk Indexing Command
-@bot.on_message(filters.command("index") & filters.user(OWNER_ID))
-def index_command(client, message):
-    parts = message.text.split(" ")
-    if len(parts) < 2:
-        message.reply_text("Usage: /index <channel_id>")
-        return
+@app.on_message(filters.command("addfile") & filters.user(ADMIN_ID))
+async def add_file(client: Client, message: Message):
+    if not message.reply_to_message or not message.reply_to_message.document:
+        return await message.reply_text("Reply to a file to add it.")
     
-    channel_id = parts[1]
-    try:
-        index_channel(channel_id)
-        message.reply_text("Indexing complete!")
-    except Exception as e:
-        logging.error(f"Indexing failed: {e}")
-        message.reply_text(f"Indexing failed: {str(e)}")
+    file = message.reply_to_message.document
+    db.add_file(file.file_id, file.file_name, file.file_size, "document")
+    
+    await message.reply_text("File added successfully!")
 
-# Health Check Route (for Koyeb)
-@bot.on_message(filters.command("health"))
-def health(client, message):
-    message.reply_text(health_check())
+@app.on_message(filters.command("getfile"))
+async def get_file(client: Client, message: Message):
+    if len(message.command) < 2:
+        return await message.reply_text("Usage: /getfile <filename>")
 
-# Run Bot
+    file_name = message.command[1]
+    user_id = message.from_user.id
+
+    if db.get_tokens(user_id) <= 0:
+        return await message.reply_text("Not enough tokens! Earn or buy tokens.")
+
+    file_data = db.get_file(file_name)
+    if file_data:
+        db.update_tokens(user_id, -1)
+        await message.reply_document(file_data["file_id"])
+    else:
+        await message.reply_text("File not found.")
+
+@app.on_message(filters.command("shorten"))
+async def shorten_url_handler(client: Client, message: Message):
+    if len(message.command) < 2:
+        return await message.reply_text("Usage: /shorten <url>")
+
+    long_url = message.command[1]
+    short_url = shorten_url(long_url)
+
+    if short_url:
+        await message.reply_text(f"Shortened URL: {short_url}")
+    else:
+        await message.reply_text("Failed to shorten URL.")
+
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    logging.info("Bot is running...")
-    bot.run()
+    print("Bot is running...")
+    app.run()
