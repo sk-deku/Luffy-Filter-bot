@@ -1,33 +1,40 @@
-from pyrogram import Client
-import logging
-from database.db import Database
-import os
+from pyrogram import Client, filters
+from pyrogram.types import Message
+from database.db import DB
 
-API_ID = int(os.getenv("API_ID", 0))
-API_HASH = os.getenv("API_HASH", "")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+db = DB()
 
-bot = Client("IndexerBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-db = Database(os.getenv("MONGO_URI", ""))
+@app.on_message(filters.channel & (filters.video | filters.document | filters.audio))
+async def index_files(client: Client, message: Message):
+    """Indexes files from a channel into the database."""
+    file = None
 
-async def index_channel(channel_id):
+    if message.video:
+        file = message.video
+        file_type = "video"
+    elif message.document:
+        file = message.document
+        file_type = "document"
+    elif message.audio:
+        file = message.audio
+        file_type = "audio"
+
+    if file:
+        db.add_file(file.file_id, file.file_name, file.file_size, file_type)
+        print(f"Indexed: {file.file_name}")
+
+@app.on_message(filters.command("index") & filters.user(ADMIN_ID))
+async def bulk_index(client: Client, message: Message):
+    """Indexes all messages in a given channel."""
+    if len(message.command) < 2:
+        return await message.reply_text("Usage: /index <channel_id>")
+
+    channel_id = message.command[1]
     try:
-        await bot.start()  # Ensure bot session is started
-        
-        async for message in bot.get_chat_history(channel_id):
-            if message.document or message.video or message.audio:
-                file_id = message.document.file_id if message.document else \
-                          message.video.file_id if message.video else \
-                          message.audio.file_id
-                file_name = message.document.file_name if message.document else \
-                            message.video.file_name if message.video else \
-                            message.audio.file_name
-
-                if not db.files.find_one({"file_id": file_id}):  # Prevent duplicate indexing
-                    db.add_file(file_id, file_name)
-
-        await bot.stop()  # Stop session properly
-        logging.info(f"Indexing completed for {channel_id}")
-
+        async for msg in client.get_chat_history(channel_id):
+            if msg.video or msg.document or msg.audio:
+                await index_files(client, msg)
+        await message.reply_text("Indexing completed.")
     except Exception as e:
-        logging.error(f"Indexing failed for {channel_id}: {e}")
+        await message.reply_text(f"Error: {e}")
+
