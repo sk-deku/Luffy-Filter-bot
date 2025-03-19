@@ -10,7 +10,7 @@ MONGO_URI = os.getenv("MONGO_URI", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 
 bot = Client("AutoFilterBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-db = Database(MONGO_URI)
+db = db(MONGO_URI)
 
 @bot.on_message(filters.command("start"))
 async def start(client, message):
