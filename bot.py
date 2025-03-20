@@ -84,7 +84,7 @@ async def earn_tokens(client, message):
             return
 
     # Generate new short link
-    original_url = f"https://yourbot.com/bypass/{user_id}?t={int(time.time())}"
+original_url = f"https://t.me/Luffy_Anime_Filter_Bot?start=earn_{user_id}"
     try:
         response = requests.get(f"{SHORTENER_API}?api={SHORTENER_KEY}&url={original_url}")
         data = response.json()
