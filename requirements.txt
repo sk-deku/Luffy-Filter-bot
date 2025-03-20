@@ -1,4 +1,6 @@
 pyrogram
+tgcrypto
 pymongo
 fastapi
 uvicorn
+requests
