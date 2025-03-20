@@ -1,5 +1,0 @@
-pyrogram
-tgcrypto
-pymongo
-flask
-requests
