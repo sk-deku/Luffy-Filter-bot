@@ -1,6 +1,7 @@
 from pyrogram import Client, filters
 import os
 from database import db
+Database = db.Database  
 from utils.shortener import shorten_url
 
 API_ID = int(os.getenv("API_ID", 0))
@@ -10,7 +11,7 @@ MONGO_URI = os.getenv("MONGO_URI", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 
 bot = Client("AutoFilterBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-db = db(MONGO_URI)
+db = Database(MONGO_URI)
 
 @bot.on_message(filters.command("start"))
 async def start(client, message):
