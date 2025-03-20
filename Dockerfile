@@ -4,15 +4,14 @@ FROM python:3.9
 # Set the working directory inside the container
 WORKDIR /bot
 
-# Copy dependency file and install required Python packages
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
 # Copy all bot files to the container
 COPY . .
 
-# Expose the port for FastAPI health check
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Expose port 8080 for health checks (Koyeb requires this)
 EXPOSE 8080
 
-# Start the bot
+# Command to run the bot
 CMD ["python", "bot.py"]
