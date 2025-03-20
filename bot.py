@@ -7,6 +7,7 @@ from fastapi import FastAPI
 import uvicorn
 from threading import Thread
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from bson import ObjectId
 
 # Load environment variables
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -64,38 +65,41 @@ async def index_channel(client, message):
             }
             files_collection.insert_one(file_data)
             count += 1
-    message.reply_text(f"✅ Indexed {count} files successfully!")
+            await asyncio.sleep(1)  # Prevent FLOOD_WAIT
+    await message.reply_text(f"✅ Indexed {count} files successfully!")
 
 # File search in group
 @bot.on_message(filters.group & filters.text)
-def search_files(client, message):
+async def search_files(client, message):
     query = message.text.lower()
-    results = files_collection.find({"filename": {"$regex": query, "$options": "i"}})
+    results = list(files_collection.find({"filename": {"$regex": query, "$options": "i"}}).limit(10))
 
-    buttons = []
-    for file in results:
-        buttons.append([InlineKeyboardButton(f"📁 {file['filename']}", callback_data=f"file_{file['_id']}")])
+    if not results:
+        await message.reply_text("❌ No files found.")
+        return
 
-    if buttons:
-        message.reply_text("🔍 Select a file:", reply_markup=InlineKeyboardMarkup(buttons))
-    else:
-        message.reply_text("❌ No files found.")
+    buttons = [
+        [InlineKeyboardButton(f"📁 {file['filename']}", callback_data=f"file_{file['_id']}")]
+        for file in results
+    ]
+
+    await message.reply_text("🔍 Select a file:", reply_markup=InlineKeyboardMarkup(buttons))
 
 # Handle file selection
 @bot.on_callback_query()
-def handle_callback(client, callback_query):
+async def handle_callback(client, callback_query):
     data = callback_query.data
     if data.startswith("file_"):
-        file_id = data.split("_")[1]
+        file_id = ObjectId(data.split("_")[1])
         file_data = files_collection.find_one({"_id": file_id})
         if file_data:
             user_id = callback_query.from_user.id
             user = users_collection.find_one({"user_id": user_id})
             if user and user.get("tokens", 0) > 0:
                 users_collection.update_one({"user_id": user_id}, {"$inc": {"tokens": -1}})
-                bot.send_document(user_id, file_data["file_id"], caption="📂 Here’s your file.")
+                await bot.send_document(user_id, file_data["file_id"], caption="📂 Here’s your file.")
             else:
-                callback_query.message.reply_text("❌ Not enough tokens! Earn tokens by bypassing a link.")
+                await callback_query.message.reply_text("❌ Not enough tokens! Earn tokens by bypassing a link.")
 
 if __name__ == "__main__":
     print("🚀 Bot is running...")
