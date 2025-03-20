@@ -1,8 +1,10 @@
 import os
 import time
+import threading
 from datetime import datetime, timedelta
 import requests
 import psutil
+from flask import Flask
 from pymongo import MongoClient
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -26,6 +28,18 @@ users_collection = db["users"]
 
 # Store temporary short links with expiry
 short_links = {}
+
+# Flask health check server
+app = Flask(__name__)
+
+@app.route("/")
+def health():
+    return "OK", 200
+
+def run_health_check():
+    app.run(host="0.0.0.0", port=8080)
+
+threading.Thread(target=run_health_check, daemon=True).start()
 
 # ======================= [ Start Command ] ======================= #
 @bot.on_message(filters.command("start"))
@@ -134,3 +148,4 @@ async def health_check(client, message):
 if __name__ == "__main__":
     print("🤖 Bot is running...")
     bot.run()
+
