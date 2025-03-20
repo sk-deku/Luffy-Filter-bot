@@ -4,3 +4,5 @@ pymongo
 fastapi
 uvicorn
 requests
+motor
+psutil
