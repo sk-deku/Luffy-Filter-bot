@@ -14,6 +14,7 @@ API_HASH = os.getenv("API_HASH")
 MONGO_URI = os.getenv("MONGO_URI")
 SHORTENER_API = os.getenv("SHORTENER_API")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 # Initialize MongoDB
 mongo_client = MongoClient(MONGO_URI)
@@ -69,6 +70,34 @@ def handle_callback(client, callback_query):
                 bot.send_document(user_id, file_data["file_id"], caption="Here's your file.")
             else:
                 callback_query.message.reply_text("Not enough tokens. Earn tokens by bypassing a link.")
+
+# Auto-index files when uploaded to channel
+@bot.on_message(filters.channel & filters.document)
+def save_file(client, message):
+    file_data = {
+        "filename": message.document.file_name,
+        "file_id": message.document.file_id,
+        "quality": "720p",  # Extract from filename
+        "season": "1",
+        "language": "English"
+    }
+    files_collection.insert_one(file_data)
+    message.reply_text(f"✅ File Indexed: {message.document.file_name}")
+
+# Bulk index files from channel
+@bot.on_message(filters.command("index") & filters.user(ADMIN_ID))
+async def index_channel(client, message):
+    async for msg in client.get_chat_history(CHANNEL_ID, limit=100):
+        if msg.document:
+            file_data = {
+                "filename": msg.document.file_name,
+                "file_id": msg.document.file_id,
+                "quality": "720p",
+                "season": "1",
+                "language": "English"
+            }
+            files_collection.insert_one(file_data)
+    message.reply_text("✅ Indexed 100 files successfully!")
 
 if __name__ == "__main__":
     print("Bot is running...")
