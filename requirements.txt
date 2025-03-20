@@ -6,3 +6,4 @@ uvicorn
 requests
 motor
 psutil
+flask
