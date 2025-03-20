@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import requests
 from pyrogram import Client, filters
 from pymongo import MongoClient
 from fastapi import FastAPI
@@ -15,6 +16,8 @@ API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 MONGO_URI = os.getenv("MONGO_URI")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
+SHORTENER_API = "https://modijiurl.com/api"
+SHORTENER_KEY = os.getenv("SHORTENER_KEY")  # Add in Koyeb env vars
 
 # Initialize MongoDB
 mongo_client = MongoClient(MONGO_URI)
@@ -99,7 +102,29 @@ async def handle_callback(client, callback_query):
                 users_collection.update_one({"user_id": user_id}, {"$inc": {"tokens": -1}})
                 await bot.send_document(user_id, file_data["file_id"], caption="📂 Here’s your file.")
             else:
-                await callback_query.message.reply_text("❌ Not enough tokens! Earn tokens by bypassing a link.")
+                await bot.send_message(user_id, "❌ Not enough tokens! Earn tokens by bypassing a link: [Click Here](https://modijiurl.com)", disable_web_page_preview=True)
+
+# Earn tokens by bypassing short links
+@bot.on_message(filters.command("earn"))
+async def earn_tokens(client, message):
+    user_id = message.from_user.id
+    original_url = f"https://yourbot.com/bypass/{user_id}"  # A dummy URL for tracking
+
+    # Shorten the URL using modijiurl.com API
+    try:
+        response = requests.get(f"{SHORTENER_API}?api={SHORTENER_KEY}&url={original_url}")
+        data = response.json()
+        if data.get("status") == "success":
+            short_link = data["shortenedUrl"]
+            await message.reply_text(
+                f"🎉 Earn 10 tokens by bypassing this link:\n\n🔗 [Click Here]({short_link})",
+                disable_web_page_preview=True
+            )
+        else:
+            await message.reply_text("❌ Failed to generate short link. Try again later.")
+    except Exception as e:
+        await message.reply_text("❌ Error occurred while generating the short link.")
+        print(e)
 
 if __name__ == "__main__":
     print("🚀 Bot is running...")
