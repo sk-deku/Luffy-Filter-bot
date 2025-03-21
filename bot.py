@@ -6,6 +6,8 @@ import psutil
 from pymongo import MongoClient
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from flask import Flask
+import threading
 
 # Environment Variables (Set in Koyeb)
 API_ID = int(os.getenv("API_ID"))
@@ -32,20 +34,6 @@ short_links = {}
 async def start(client, message):
     await message.reply_text("✅ Bot is up and running!")
 
-# ======================= [ File Indexing ] ======================= #
-@bot.on_message(filters.channel & filters.document)
-async def index_files(client, message):
-    file_name = message.document.file_name
-    file_id = message.document.file_id
-
-    # Save file details to MongoDB
-    files_collection.update_one(
-        {"file_id": file_id},
-        {"$set": {"filename": file_name, "file_id": file_id}},
-        upsert=True
-    )
-    print(f"Indexed: {file_name}")
-
 # ======================= [ File Search ] ======================= #
 @bot.on_message(filters.text & filters.group)
 async def search_files(client, message):
@@ -65,14 +53,11 @@ async def search_files(client, message):
 
     await message.reply_text("📂 **Select a file:**", reply_markup=InlineKeyboardMarkup(buttons))
 
-# ======================= [ File Selection & Auto-Redirect ] ======================= #
+# ======================= [ File Selection ] ======================= #
 @bot.on_callback_query(filters.regex(r"file_(.*)"))
 async def file_selection(client, callback_query):
     user_id = callback_query.from_user.id
     file_name = callback_query.data.split("_", 1)[1]
-
-    # Redirect user to bot and send message
-    await bot.send_message(user_id, "🔄 Redirecting you to the bot for file access...")
 
     # Check if user has enough tokens
     user = users_collection.find_one({"user_id": user_id})
@@ -84,12 +69,12 @@ async def file_selection(client, callback_query):
         await bot.send_message(user_id, "❌ Not enough tokens! Use /earn to get more tokens.")
         await callback_query.answer("❌ Not enough tokens! Check your PM.", show_alert=True)
 
-# ======================= [ Earn Tokens with Expiry ] ======================= #
+# ======================= [ Earn Tokens ] ======================= #
 @bot.on_message(filters.command("earn"))
 async def earn_tokens(client, message):
     user_id = message.from_user.id
 
-    # Check if the user already has an active short link
+    # Check if a valid short link exists
     if user_id in short_links:
         link_data = short_links[user_id]
         if datetime.utcnow() < link_data["expiry"]:
@@ -100,14 +85,14 @@ async def earn_tokens(client, message):
             await message.reply_text("🎉 Earn 10 tokens by bypassing this link:", reply_markup=InlineKeyboardMarkup(buttons))
             return
 
-    # Generate a new short link
+    # Generate new short link
     original_url = f"https://t.me/Luffy_Anime_Filter_Bot?start=earn_{user_id}"
     try:
         response = requests.get(f"{SHORTENER_API}?api={SHORTENER_KEY}&url={original_url}")
         data = response.json()
         if data.get("status") == "success":
             short_link = data["shortenedUrl"]
-            short_links[user_id] = {"short_link": short_link, "expiry": datetime.utcnow() + timedelta(hours=1), "earned": False}
+            short_links[user_id] = {"short_link": short_link, "expiry": datetime.utcnow() + timedelta(hours=1)}
 
             buttons = [
                 [InlineKeyboardButton("🤑 Earn 10 Tokens", url=short_link)],
@@ -120,38 +105,13 @@ async def earn_tokens(client, message):
         await message.reply_text("❌ Error occurred while generating the short link.")
         print(e)
 
-# **Handling token verification (User returns after bypassing the link)**
-@bot.on_message(filters.regex(r"earn_\d+"))
-async def verify_tokens(client, message):
-    user_id = message.from_user.id
-
-    # Check if the user has an active link
-    if user_id in short_links:
-        if short_links[user_id]["earned"]:
-            await message.reply_text("✅ You have already claimed your tokens for this link!")
-            return
-
-        # Add 10 tokens to the user's balance
-        users_collection.update_one({"user_id": user_id}, {"$inc": {"tokens": 10}}, upsert=True)
-        short_links[user_id]["earned"] = True  # Mark link as used
-
-        await message.reply_text("🎉 You have earned 10 tokens!")
-
-        # Remove expired links
-        for uid in list(short_links.keys()):
-            if datetime.utcnow() > short_links[uid]["expiry"] or short_links[uid]["earned"]:
-                del short_links[uid]
-    else:
-        await message.reply_text("❌ Invalid or expired link.")
-
-# ======================= [ Check Tokens Command ] ======================= #
+# ======================= [ Tokens Command ] ======================= #
 @bot.on_message(filters.command("tokens"))
 async def check_tokens(client, message):
     user_id = message.from_user.id
     user = users_collection.find_one({"user_id": user_id})
-
     tokens = user.get("tokens", 0) if user else 0
-    await message.reply_text(f"💰 **Your Tokens:** `{tokens}`")
+    await message.reply_text(f"💰 **You have {tokens} tokens left.**")
 
 # ======================= [ Stats Command ] ======================= #
 @bot.on_message(filters.command("stats"))
@@ -175,7 +135,18 @@ async def stats(client, message):
 
     await message.reply_text(stats_message)
 
+# ======================= [ Health Check (Koyeb) ] ======================= #
+app = Flask(__name__)
+
+@app.route("/")
+def health_check():
+    return "Bot is running!", 200
+
+def run_health_check():
+    app.run(host="0.0.0.0", port=8080)
+
 # ======================= [ Bot Start ] ======================= #
 if __name__ == "__main__":
+    threading.Thread(target=run_health_check, daemon=True).start()
     print("🤖 Bot is running...")
     bot.run()
