@@ -1,19 +1,18 @@
 import os
 import time
-import threading
 from datetime import datetime, timedelta
 import requests
 import psutil
-from flask import Flask
 from pymongo import MongoClient
 from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 # Environment Variables (Set in Koyeb)
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # Channel ID to monitor
 SHORTENER_KEY = "5a6b57d3cbd44e9b81cda3a2ec9d93024fcc6838"
 SHORTENER_API = "https://modijiurl.com/api"
 
@@ -29,22 +28,34 @@ users_collection = db["users"]
 # Store temporary short links with expiry
 short_links = {}
 
-# Flask health check server
-app = Flask(__name__)
-
-@app.route("/")
-def health():
-    return "OK", 200
-
-def run_health_check():
-    app.run(host="0.0.0.0", port=8080)
-
-threading.Thread(target=run_health_check, daemon=True).start()
-
 # ======================= [ Start Command ] ======================= #
 @bot.on_message(filters.command("start"))
 async def start(client, message):
     await message.reply_text("✅ Bot is up and running!")
+
+# ======================= [ Auto Indexing ] ======================= #
+@bot.on_message(filters.channel & filters.document)
+async def auto_index(client, message: Message):
+    file_id = message.document.file_id
+    file_name = message.document.file_name
+    
+    if not files_collection.find_one({"file_id": file_id}):
+        files_collection.insert_one({"file_id": file_id, "filename": file_name})
+        print(f"📂 Indexed: {file_name}")
+    
+# ======================= [ Manual Indexing ] ======================= #
+@bot.on_message(filters.command("index") & filters.group)
+async def manual_index(client, message: Message):
+    if not message.reply_to_message or not message.reply_to_message.document:
+        await message.reply_text("❌ Reply to a document to index it!")
+        return
+    
+    file_id = message.reply_to_message.document.file_id
+    file_name = message.reply_to_message.document.file_name
+    
+    if not files_collection.find_one({"file_id": file_id}):
+        files_collection.insert_one({"file_id": file_id, "filename": file_name})
+        await message.reply_text(f"✅ Indexed: `{file_name}`")
 
 # ======================= [ File Search ] ======================= #
 @bot.on_message(filters.text & filters.group)
@@ -117,35 +128,7 @@ async def earn_tokens(client, message):
         await message.reply_text("❌ Error occurred while generating the short link.")
         print(e)
 
-# ======================= [ Stats Command ] ======================= #
-@bot.on_message(filters.command("stats"))
-async def stats(client, message):
-    total_files = files_collection.count_documents({})
-    total_users = users_collection.count_documents({})
-
-    # Get system storage details
-    disk_usage = psutil.disk_usage("/")
-    total_space = disk_usage.total // (1024 * 1024)
-    used_space = disk_usage.used // (1024 * 1024)
-    free_space = disk_usage.free // (1024 * 1024)
-
-    stats_message = (
-        f"📊 **Bot Statistics**\n"
-        f"📂 **Stored Files:** `{total_files}`\n"
-        f"👤 **Total Users:** `{total_users}`\n"
-        f"💾 **Used Storage:** `{used_space} MB`\n"
-        f"📁 **Free Storage:** `{free_space} MB`\n"
-    )
-
-    await message.reply_text(stats_message)
-
-# ======================= [ Health Check (Koyeb) ] ======================= #
-@bot.on_message(filters.command("health"))
-async def health_check(client, message):
-    await message.reply_text("✅ Bot is running healthy!")
-
 # ======================= [ Bot Start ] ======================= #
 if __name__ == "__main__":
     print("🤖 Bot is running...")
     bot.run()
-
