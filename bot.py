@@ -68,19 +68,22 @@ async def verify_tokens(client, message):
 
     try:
         response = requests.get(f"{SHORTENER_API}?api={SHORTENER_KEY}&url={original_url}")
-        data = response.json()
-        if data.get("status") == "success":
-            short_link = data["shortenedUrl"]
-            expiry_time = datetime.utcnow() + timedelta(hours=1)
-            tokens_collection.insert_one({"user_id": user_id, "token": unknown_token, "short_link": short_link, "expiry": expiry_time})
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("status") == "success":
+                short_link = data.get("shortenedUrl")
+                expiry_time = datetime.utcnow() + timedelta(hours=1)
+                tokens_collection.insert_one({"user_id": user_id, "token": unknown_token, "short_link": short_link, "expiry": expiry_time})
 
-            buttons = [
-                [InlineKeyboardButton("🤑 Verify & Earn 10 Tokens", url=short_link)],
-                [InlineKeyboardButton("📖 How to Verify?", url="https://t.me/LinkZzzg/6")]
-            ]
-            await message.reply_text("🎉 Earn 10 tokens by verifying this link:", reply_markup=InlineKeyboardMarkup(buttons))
+                buttons = [
+                    [InlineKeyboardButton("🤑 Verify & Earn 10 Tokens", url=short_link)],
+                    [InlineKeyboardButton("📖 How to Verify?", url="https://t.me/LinkZzzg/6")]
+                ]
+                await message.reply_text("🎉 Earn 10 tokens by verifying this link:", reply_markup=InlineKeyboardMarkup(buttons))
+            else:
+                await message.reply_text("❌ Failed to generate short link.")
         else:
-            await message.reply_text("❌ Failed to generate short link.")
+            await message.reply_text("❌ Shortener API error. Please try again later.")
     except requests.exceptions.RequestException as e:
         logging.error(f"Shortener API Error: {e}")
         await message.reply_text("❌ Error occurred while generating the short link.")
@@ -88,9 +91,15 @@ async def verify_tokens(client, message):
 # ======================= [ Token Auto Verification ] ======================= #
 async def verify_start(client, message):
     user_id = message.from_user.id
-    token_received = message.text.split("_", 1)[1]
-    
+    args = message.text.split("_", 1)
+
+    if len(args) < 2:
+        await message.reply_text("❌ Invalid verification request.")
+        return
+
+    token_received = args[1]
     token_entry = tokens_collection.find_one({"user_id": user_id, "token": token_received})
+
     if token_entry:
         users_collection.update_one({"user_id": user_id}, {"$inc": {"tokens": 10}}, upsert=True)
         tokens_collection.delete_one({"user_id": user_id, "token": token_received})
@@ -120,10 +129,16 @@ async def file_selection(client, callback_query):
     user_id = callback_query.from_user.id
     file_name = callback_query.data.split("_", 1)[1]
     
+    file_path = f"./files/{file_name}"
+    if not os.path.exists(file_path):
+        await bot.send_message(user_id, "❌ File not found on the server.")
+        await callback_query.answer("❌ File is missing!", show_alert=True)
+        return
+    
     user = users_collection.find_one({"user_id": user_id})
     if user and user.get("tokens", 0) > 0:
         users_collection.update_one({"user_id": user_id}, {"$inc": {"tokens": -1}})
-        await bot.send_document(user_id, f"./files/{file_name}")
+        await bot.send_document(user_id, file_path)
         await callback_query.answer("📤 File sent in PM!", show_alert=True)
     else:
         await bot.send_message(user_id, "❌ Not enough tokens! Use /verify to get more tokens.")
@@ -136,7 +151,7 @@ def health_check():
     return "Bot is running!", 200
 
 def run_health_check():
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
 
 # ======================= [ Bot Start ] ======================= #
 if __name__ == "__main__":
