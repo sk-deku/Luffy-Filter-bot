@@ -1,6 +1,7 @@
 import os
 import time
 import hashlib
+import logging
 from datetime import datetime, timedelta
 import requests
 import psutil
@@ -9,6 +10,9 @@ from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from flask import Flask
 import threading
+
+# Configure Logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Environment Variables (Set in Koyeb)
 API_ID = int(os.getenv("API_ID"))
@@ -31,32 +35,33 @@ tokens_collection = db["tokens"]  # New collection for storing tokens
 # ======================= [ Start Command ] ======================= #
 @bot.on_message(filters.command("start"))
 async def start(client, message):
+    user_id = message.from_user.id
+    args = message.text.split(" ")
+    
+    if len(args) > 1 and args[1].startswith("verify_"):
+        await verify_start(client, message)
+        return
+    
     await message.reply_text("✅ Bot is up and running!")
 
 # ======================= [ Verify Tokens ] ======================= #
-@bot.on_message(filters.command("verify"))
+@bot.on_message(filters.command("verify") & filters.private)
 async def verify_tokens(client, message):
-    if message.chat.type != "private":
-        await message.reply_text("❌ This command works only in PM.")
-        return
-    
     user_id = message.from_user.id
-
+    
+    # Remove expired tokens first
+    tokens_collection.delete_many({"expiry": {"$lt": datetime.utcnow()}})
+    
     # Check if a valid token exists
     existing_token = tokens_collection.find_one({"user_id": user_id})
     if existing_token:
-        expiry_time = existing_token["expiry"]
-        if datetime.utcnow() < expiry_time:
-            buttons = [
-                [InlineKeyboardButton("🤑 Verify & Earn 10 Tokens", url=existing_token["short_link"])],
-                [InlineKeyboardButton("📖 How to Verify?", url="https://t.me/LinkZzzg/6")]
-            ]
-            await message.reply_text("🎉 Earn 10 tokens by verifying this link:", reply_markup=InlineKeyboardMarkup(buttons))
-            return
-        else:
-            # Expire old token
-            tokens_collection.delete_one({"user_id": user_id})
-
+        buttons = [
+            [InlineKeyboardButton("🤑 Verify & Earn 10 Tokens", url=existing_token["short_link"])],
+            [InlineKeyboardButton("📖 How to Verify?", url="https://t.me/LinkZzzg/6")]
+        ]
+        await message.reply_text("🎉 Earn 10 tokens by verifying this link:", reply_markup=InlineKeyboardMarkup(buttons))
+        return
+    
     # Generate a new unknown token
     unknown_token = hashlib.sha256(f"{user_id}{time.time()}".encode()).hexdigest()[:10]
     original_url = f"https://t.me/Luffy_Anime_Filter_Bot?start=verify_{unknown_token}"
@@ -67,8 +72,6 @@ async def verify_tokens(client, message):
         if data.get("status") == "success":
             short_link = data["shortenedUrl"]
             expiry_time = datetime.utcnow() + timedelta(hours=1)
-
-            # Store token in database
             tokens_collection.insert_one({"user_id": user_id, "token": unknown_token, "short_link": short_link, "expiry": expiry_time})
 
             buttons = [
@@ -78,65 +81,56 @@ async def verify_tokens(client, message):
             await message.reply_text("🎉 Earn 10 tokens by verifying this link:", reply_markup=InlineKeyboardMarkup(buttons))
         else:
             await message.reply_text("❌ Failed to generate short link.")
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Shortener API Error: {e}")
         await message.reply_text("❌ Error occurred while generating the short link.")
-        print(e)
 
 # ======================= [ Token Auto Verification ] ======================= #
-@bot.on_message(filters.command("start") & filters.regex(r"verify_(.*)"))
 async def verify_start(client, message):
     user_id = message.from_user.id
     token_received = message.text.split("_", 1)[1]
-
-    # Check if token exists and is valid
+    
     token_entry = tokens_collection.find_one({"user_id": user_id, "token": token_received})
     if token_entry:
-        # Add 10 tokens to user account
         users_collection.update_one({"user_id": user_id}, {"$inc": {"tokens": 10}}, upsert=True)
-
-        # Delete used token
         tokens_collection.delete_one({"user_id": user_id, "token": token_received})
-
         await message.reply_text("✅ Token verified! You have received 10 tokens.")
     else:
         await message.reply_text("❌ Invalid or expired token.")
 
-# ======================= [ Link Expired Handling ] ======================= #
-@bot.on_message(filters.regex(SHORTENER_API))
-async def expired_link_handler(client, message):
-    user_id = message.from_user.id
-    token_entry = tokens_collection.find_one({"user_id": user_id})
-    if token_entry:
-        expiry_time = token_entry["expiry"]
-        if datetime.utcnow() > expiry_time:
-            await message.reply_text("❌ Link expired. Generate a new link using /verify.")
-            tokens_collection.delete_one({"user_id": user_id})
+# ======================= [ File Search ] ======================= #
+@bot.on_message(filters.text & filters.group)
+async def search_files(client, message):
+    query = message.text.lower()
+    files = files_collection.find({"filename": {"$regex": query, "$options": "i"}})
+    
+    file_list = [file["filename"] for file in files]
+    if not file_list:
+        await message.reply_text("❌ No files found.")
+        return
 
-# ======================= [ Stats Command ] ======================= #
-@bot.on_message(filters.command("stats"))
-async def stats(client, message):
-    total_files = files_collection.count_documents({})
-    total_users = users_collection.count_documents({})
+    buttons = [[InlineKeyboardButton(name, callback_data=f"file_{name}")] for name in file_list[:5]]
+    buttons.append([InlineKeyboardButton("➡ Next", callback_data="next_page")])
+    
+    await message.reply_text("📂 **Select a file:**", reply_markup=InlineKeyboardMarkup(buttons))
 
-    # Get system storage details
-    disk_usage = psutil.disk_usage("/")
-    total_space = disk_usage.total // (1024 * 1024)
-    used_space = disk_usage.used // (1024 * 1024)
-    free_space = disk_usage.free // (1024 * 1024)
-
-    stats_message = (
-        f"📊 **Bot Statistics**\n"
-        f"📂 **Stored Files:** `{total_files}`\n"
-        f"👤 **Total Users:** `{total_users}`\n"
-        f"💾 **Used Storage:** `{used_space} MB`\n"
-        f"📁 **Free Storage:** `{free_space} MB`\n"
-    )
-
-    await message.reply_text(stats_message)
+# ======================= [ File Selection ] ======================= #
+@bot.on_callback_query(filters.regex(r"file_(.*)"))
+async def file_selection(client, callback_query):
+    user_id = callback_query.from_user.id
+    file_name = callback_query.data.split("_", 1)[1]
+    
+    user = users_collection.find_one({"user_id": user_id})
+    if user and user.get("tokens", 0) > 0:
+        users_collection.update_one({"user_id": user_id}, {"$inc": {"tokens": -1}})
+        await bot.send_document(user_id, f"./files/{file_name}")
+        await callback_query.answer("📤 File sent in PM!", show_alert=True)
+    else:
+        await bot.send_message(user_id, "❌ Not enough tokens! Use /verify to get more tokens.")
+        await callback_query.answer("❌ Not enough tokens! Check your PM.", show_alert=True)
 
 # ======================= [ Health Check (Koyeb) ] ======================= #
 app = Flask(__name__)
-
 @app.route("/")
 def health_check():
     return "Bot is running!", 200
@@ -147,5 +141,5 @@ def run_health_check():
 # ======================= [ Bot Start ] ======================= #
 if __name__ == "__main__":
     threading.Thread(target=run_health_check, daemon=True).start()
-    print("🤖 Bot is running...")
+    logging.info("🤖 Bot is running...")
     bot.run()
